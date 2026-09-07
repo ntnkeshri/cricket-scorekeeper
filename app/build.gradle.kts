@@ -1,8 +1,12 @@
+@file:Suppress("UnstableApiUsage")
+
 import java.io.File
 
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.sonarqube)
+    jacoco
 }
 
 android {
@@ -20,6 +24,9 @@ android {
     }
 
     buildTypes {
+        debug {
+            enableUnitTestCoverage = true
+        }
         release {
             optimization {
                 enable = false
@@ -52,8 +59,53 @@ android {
     }
 }
 
+sonar {
+    properties {
+        property("sonar.host.url", "https://sonarcloud.io")
+        property("sonar.projectKey", "ntnkeshri")
+        property("sonar.organization", "ntnkeshri")
+        property("sonar.projectName", "CricketScorekeeper")
+        property("sonar.coverage.jacoco.xmlReportPaths", "${layout.buildDirectory.get()}/reports/jacoco/jacocoTestReport/jacocoTestReport.xml")
+    }
+}
+
+tasks.register<JacocoReport>("jacocoTestReport") {
+    group = "verification"
+    description = "Generates JaCoCo code coverage report for debug unit tests."
+    dependsOn("testDebugUnitTest")
+
+    reports {
+        xml.required.set(true)
+        html.required.set(true)
+    }
+
+    val fileFilter = listOf(
+        "**/R.class",
+        "**/R$*.class",
+        "**/BuildConfig.*",
+        "**/Manifest*.*",
+        "**/*Test*.*",
+        "android/**/*.*"
+    )
+
+    val debugTree = fileTree("${layout.buildDirectory.get()}/tmp/kotlin-classes/debug") {
+        exclude(fileFilter)
+    }
+
+    val mainSrc = "${project.projectDir}/src/main/java"
+
+    sourceDirectories.setFrom(files(mainSrc))
+    classDirectories.setFrom(files(debugTree))
+    executionData.setFrom(fileTree(layout.buildDirectory.get()) {
+        include(
+            "outputs/unit_test_code_coverage/debugUnitTest/testDebugUnitTest.exec",
+            "jacoco/testDebugUnitTest.exec"
+        )
+    })
+}
+
 dependencies {
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.4")
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)
@@ -64,11 +116,11 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     testImplementation(libs.junit)
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
+    testImplementation(libs.kotlinx.coroutines.test)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)
-    androidTestImplementation("androidx.test.espresso:espresso-intents:3.6.1")
+    androidTestImplementation(libs.androidx.espresso.intents)
     androidTestImplementation(libs.androidx.junit)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
@@ -76,10 +128,10 @@ dependencies {
 
 tasks.register("generateRtm") {
     group = "documentation"
-    description = "Scans source code for @Requirement annotations and generates RTM.md in project root."
+    description = "Scans source code and test files for @Requirement annotations and generates RTM.md in project root."
 
     val rootDir = layout.projectDirectory.asFile.parentFile ?: layout.projectDirectory.asFile
-    val srcDir = layout.projectDirectory.dir("src/main/java").asFile
+    val srcDir = layout.projectDirectory.dir("src").asFile
     val outputFile = File(rootDir, "RTM.md")
 
     inputs.dir(srcDir)
@@ -117,7 +169,7 @@ tasks.register("generateRtm") {
         val markdown = buildString {
             appendLine("# Requirement Traceability Matrix (RTM)")
             appendLine()
-            appendLine("Automated requirement traceability matrix mapping system requirements to source code implementations.")
+            appendLine("Automated requirement traceability matrix mapping system requirements to source code and test implementations.")
             appendLine()
             appendLine("| Requirement ID | Description | File | Target Symbol |")
             appendLine("|---|---|---|---|")
