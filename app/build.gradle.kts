@@ -10,11 +10,11 @@ plugins {
 }
 
 android {
-    namespace = "com.androidApp.cricketscorekeeper"
+    namespace = "com.ntnkeshri.cricketscorekeeper"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.androidApp.cricketscorekeeper"
+        applicationId = "com.ntnkeshri.cricketscorekeeper"
         minSdk = 24
         targetSdk = 37
         versionCode = 1
