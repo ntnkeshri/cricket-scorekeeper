@@ -1,0 +1,156 @@
+import re
+
+with open("app/src/main/java/com/ntnkeshri/cricketscorekeeper/viewmodel/ScoreViewModel.kt", "r") as f:
+    code = f.read()
+
+# Remove java and android imports
+code = re.sub(r'import java\..*\n', '', code)
+code = re.sub(r'import android\..*\n', '', code)
+code = re.sub(r'@SuppressLint\("NewApi"\)\n', '', code)
+
+# Change package and ViewModel
+code = code.replace("package com.ntnkeshri.cricketscorekeeper.viewmodel\n", 
+"""package com.ntnkeshri.cricketscorekeeper.viewmodel
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.ntnkeshri.cricketscorekeeper.repository.MatchRepository
+import com.ntnkeshri.cricketscorekeeper.repository.InMemoryMatchRepository
+import com.ntnkeshri.cricketscorekeeper.models.TossDecision
+import kotlinx.coroutines.launch
+""")
+
+code = code.replace("class ScoreViewModel : ViewModel() {",
+"""class ScoreViewModel(
+    private val repository: MatchRepository = InMemoryMatchRepository()
+) : ViewModel() {""")
+
+init_block = """
+    init {
+        viewModelScope.launch {
+            val savedState = repository.loadCurrentMatch()
+            if (savedState != null) {
+                _state.value = savedState
+            }
+            var lastBallCount = _state.value.ballHistory.size
+            _state.collect { currentState ->
+                if (currentState.ballHistory.size != lastBallCount) {
+                    lastBallCount = currentState.ballHistory.size
+                    repository.saveCurrentMatch(currentState)
+                }
+            }
+        }
+    }
+"""
+code = code.replace("val state: StateFlow<MatchState> = _state.asStateFlow()", "val state: StateFlow<MatchState> = _state.asStateFlow()\n" + init_block)
+
+# Remove compression functions
+code = re.sub(r'fun compressState\(\): String \{.*?\n    \}', '', code, flags=re.DOTALL)
+code = re.sub(r'fun decompressState\(compressed: String\) \{.*?\n    \}', '', code, flags=re.DOTALL)
+
+# Remove invalid properties from copy() calls
+code = re.sub(r'\s*totalRuns\s*=\s*[^,]+,?', '', code)
+code = re.sub(r'\s*validBalls\s*=\s*[^,]+,?', '', code)
+code = re.sub(r'\s*totalExtras\s*=\s*[^,]+,?', '', code)
+code = re.sub(r'\s*wickets\s*=\s*[^,]+,?', '', code)
+
+methods = """
+    fun recordToss(winner: String, decision: TossDecision) {
+        _state.update { s ->
+            val battingTeam = if (decision == TossDecision.BAT) winner else {
+                if (winner == s.team1Name) s.team2Name else s.team1Name
+            }
+            val newTeam1 = battingTeam
+            val newTeam2 = if (battingTeam == s.team1Name) s.team2Name else s.team1Name
+
+            s.copy(
+                tossWinner = winner,
+                tossDecision = decision,
+                showTossDialog = false,
+                team1Name = newTeam1,
+                team2Name = newTeam2
+            )
+        }
+    }
+
+    fun skipTossAndSetBattingTeam(battingTeamName: String) {
+        _state.update { s ->
+            val newTeam1 = battingTeamName
+            val newTeam2 = if (battingTeamName == s.team1Name) s.team2Name else s.team1Name
+            
+            s.copy(
+                tossWinner = null,
+                tossDecision = null,
+                showTossDialog = false,
+                team1Name = newTeam1,
+                team2Name = newTeam2
+            )
+        }
+    }
+
+    fun togglePenaltyDialog(show: Boolean) {
+        _state.update { it.copy(showPenaltyDialog = show) }
+    }
+
+    fun addCustomPenalty(runs: Int) {
+        if (_state.value.isInningsComplete) return
+        _state.update { s ->
+            val event = BallEvent(runsOffBat = runs, isValidBall = true, strikerName = s.striker.name)
+            val notation = "P$runs"
+            val isFour = runs == 4
+            val isSix = runs == 6
+            
+            val next = s.copy(
+                ballHistory = s.ballHistory + event,
+                currentOverHistory = s.currentOverHistory + notation,
+                currentOverRuns = s.currentOverRuns + runs,
+                striker = s.striker.copy(
+                    runs = s.striker.runs + runs,
+                    balls = s.striker.balls + 1,
+                    fours = s.striker.fours + if (isFour) 1 else 0,
+                    sixes = s.striker.sixes + if (isSix) 1 else 0
+                ),
+                showPenaltyDialog = false,
+                isFreeHit = false // Consumes a free hit
+            )
+            
+            checkInningsComplete(handleEndOfOver(next))
+        }
+    }
+
+    fun undoLastBall() {
+        _state.update { currentState ->
+            if (currentState.ballHistory.isEmpty()) return@update currentState
+            
+            val lastEvent = currentState.ballHistory.last()
+            
+            val newOverHistory = if (currentState.currentOverHistory.isNotEmpty()) {
+                currentState.currentOverHistory.dropLast(1)
+            } else {
+                currentState.currentOverHistory
+            }
+            
+            val newStriker = if (lastEvent.strikerName == currentState.striker.name) {
+                currentState.striker.copy(
+                    runs = currentState.striker.runs - lastEvent.runsOffBat,
+                    balls = currentState.striker.balls - if (lastEvent.isValidBall) 1 else 0
+                )
+            } else {
+                currentState.striker
+            }
+            
+            currentState.copy(
+                ballHistory = currentState.ballHistory.dropLast(1),
+                currentOverHistory = newOverHistory,
+                striker = newStriker
+            )
+        }
+    }
+"""
+
+last_bracket_idx = code.rfind("}")
+code = code[:last_bracket_idx] + methods + "\n}"
+
+with open("app/src/commonMain/kotlin/com/ntnkeshri/cricketscorekeeper/viewmodel/ScoreViewModel.kt", "w") as f:
+    f.write(code)
+
